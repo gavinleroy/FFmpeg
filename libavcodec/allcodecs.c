@@ -43,6 +43,8 @@ extern AVCodec ff_ansi_decoder;
 extern AVCodec ff_apng_encoder;
 extern AVCodec ff_apng_decoder;
 extern AVCodec ff_arbc_decoder;
+extern AVCodec ff_asif_encoder;
+extern AVCodec ff_asif_decoder;
 extern AVCodec ff_asv1_encoder;
 extern AVCodec ff_asv1_decoder;
 extern AVCodec ff_asv2_encoder;
