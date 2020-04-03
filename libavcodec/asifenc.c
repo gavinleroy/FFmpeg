@@ -46,6 +46,7 @@
  * @param offset Sample value offset
  */
 
+///<    ENCODE(uint8_t, byte, dst, n, 0)
 #define ENCODE(type, endian, dst, n, offset)                            \
     n /= avctx->channels;						\
     for (c = 0; c < avctx->channels; c++) {                             \
@@ -62,7 +63,7 @@ static int asif_encode_init(AVCodecContext *avctx) {
 ///<        AVERROR(EINVAL); ///< the id of the codec is incorrect
 
     avctx->bits_per_coded_sample = 8;
-    avctx->block_align           = 0;
+///<    avctx->block_align           = 0;
 ///<    avctx->bit_rate              = avctx->block_align * 8LL * avctx->sample_rate;
     avctx->sample_fmt		 = AV_SAMPLE_FMT_U8P;
 
@@ -73,9 +74,9 @@ static int asif_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
                              const AVFrame *frame, int *got_packet_ptr)
 {
     
-    int sample_size, n, c, ret; 
+    int sample_size, n, i, c, ret; 
     unsigned char *dst;
-    const uint8_t *samples_uint8_t;
+    const uint8_t *samples;
     
     sample_size = 1; ///< Samples are uint8_t
     n = frame->nb_samples * avctx->channels;
@@ -86,7 +87,12 @@ static int asif_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 
     dst = avpkt->data;
 
-    ENCODE(uint8_t, byte, dst, n, 0)
+    n /= avctx->channels; ///< ECODE THE DATA IN A PLANAR FORM
+    for (c = 0; c < avctx->channels; c++){
+        samples  = frame->extended_data[c]; 
+        for (i = 0; i < n; i++)
+	    *dst++ = *samples++;
+    }
 
     *got_packet_ptr = 1;
 

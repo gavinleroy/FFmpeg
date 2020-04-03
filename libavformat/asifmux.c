@@ -53,7 +53,7 @@
 #define SAMPLES_OFFSET 10
 #define START_OFFSET 14
 
-#define INITIAL_SIZE 1024
+#define INITIAL_SIZE 1
 #define MAX_CHANNELS 200
 
 typedef struct{
@@ -67,13 +67,14 @@ typedef struct{
 static void add_data(ASIFContext *ctx, int channel, int size, uint8_t *src){
 
     if(size + ctx->ind[channel] >= ctx->max[channel]){ ///< Resize and copy over data
-        ctx->max[channel] *= 2; ///< Increase our max size
+	while(size + ctx->ind[channel] >= ctx->max[channel]) ///< Make sure that new size is large enough
+            ctx->max[channel] *= 2; ///< Increase our max size
         uint8_t *new_data = (uint8_t *) malloc(ctx->max[channel] * sizeof(uint8_t));
         for(int i = 0; i < ctx->ind[channel]; i++) ///< Copy all old data over
             new_data[i] = ctx->data[channel][i]; 
 
-        free(ctx->data[channel]);
-        ctx->data[channel] = new_data;
+        free(ctx->data[channel]); ///< Free old data
+        ctx->data[channel] = new_data; ///< Swap pointers
     }
 
     ///<Copy new data into buffer
@@ -86,11 +87,12 @@ static void add_data(ASIFContext *ctx, int channel, int size, uint8_t *src){
 
 static void init_data(ASIFContext *ctx){
 
-    ctx->data = (uint8_t **) malloc(MAX_CHANNELS * sizeof(uint8_t*));
+    ctx->data = (uint8_t **) malloc(MAX_CHANNELS * sizeof(uint8_t *));
     ctx->max = (int *) malloc(MAX_CHANNELS * sizeof(int));
     ctx->ind = (int *) malloc(MAX_CHANNELS * sizeof(int));
 
-    for(int i = 1; i < MAX_CHANNELS; i++){ ///< Start at 1 because channel(0) is already written
+   ///< CHANGED HERE
+    for(int i = 0; i < MAX_CHANNELS; i++){ ///< Start at 1 because channel(0) is already written
         ctx->data[i] = (uint8_t *) malloc(INITIAL_SIZE * sizeof(uint8_t));
 	ctx->max[i] = INITIAL_SIZE;
 	ctx->ind[i] = 0;
@@ -113,6 +115,7 @@ static int asif_write_header(AVFormatContext *s){
     
     ///<Write the number of channels
     avio_seek(s->pb, CHANNELS_OFFSET, SEEK_SET);
+///<    avio_wl16(s->pb, 1);
     avio_wl16(s->pb, par->channels);
 
     ///<Write the samples per channel
@@ -140,12 +143,19 @@ static int asif_write_packet(AVFormatContext *s, AVPacket *pkt){
     uint8_t *src = pkt->data;
 
     for(int i = 0; i < ctx->channels; i++) {
-	if(i > 0){ ///< Append to the right vector for later
+///<	if(i > 0){ ///< Append to the right vector for later
+
+	    /*  Currently for debugging purposes all channels are written to the 
+	        data vectors and written to the file in the trailor.
+		Before submitting make sure that the first channel is written
+		in real time and all other channels saved in the buffer. 
+	    */
 	    add_data(ctx, i, packet_samples, src); 
-	} else { ///< Write the first channel to the file
-            avio_seek(s->pb, START_OFFSET + ctx->samples, SEEK_SET);    
-            avio_write(s->pb, src, packet_samples);
-        }
+
+///<	} else { ///< Write the first channel to the file
+///<            avio_seek(s->pb, START_OFFSET + ctx->samples, SEEK_SET);    
+///<            avio_write(s->pb, src, packet_samples);
+///<        }
 	src += packet_samples;
     }
     ctx->samples += packet_samples;
@@ -155,8 +165,9 @@ static int asif_write_packet(AVFormatContext *s, AVPacket *pkt){
 
 static void write_remaining_channels(ASIFContext *ctx, AVIOContext *pb){
     ///< Set stream after the first channel written.
-    for(int c = 1; c < ctx->channels; c++){
-        avio_seek(pb, START_OFFSET + (c * ctx->samples), SEEK_SET);
+///<    avio_seek(pb, START_OFFSET + ctx->samples, SEEK_SET);
+    avio_seek(pb, START_OFFSET, SEEK_SET); ///< WE ARE CURRENTLY SAVING/WRITING ALL CHANNELS
+    for(int c = 0; c < ctx->channels; c++){ ///< CHANGED HERE
         avio_write(pb, ctx->data[c], ctx->samples);    
     }
 }
@@ -175,7 +186,7 @@ static int asif_write_trailer(AVFormatContext *s){
     write_remaining_channels(ctx, s->pb);
 
     ///< Free up all data used by ASIFContext
-    for(int i = 1; i < MAX_CHANNELS; i++){
+    for(int i = 0; i < MAX_CHANNELS; i++){ ///< CHANGED HERE
 	free(ctx->data[i]);
 	ctx->max[i] = -1;
 	ctx->ind[i] = -1;

@@ -50,11 +50,11 @@ static int asif_decode_frame(AVCodecContext *avctx, void *data,
     sample_size = 1;
 
     ///<Size of the pkt data in each channel
-    n = avpkt->size / avctx->channels;
+    n = avpkt->size / avctx->channels / sample_size;
 
     ///<Number of samples we're writing per frame.
     frame->nb_samples = n;
-    frame->linesize[0] = n;
+    frame->linesize[0] = n * avctx->channels;
     frame->format = avctx->sample_fmt;
 
     if (n < 0) {
@@ -75,17 +75,17 @@ static int asif_decode_frame(AVCodecContext *avctx, void *data,
     if (ret < 0)
         return ret;
 
+    
     ///< Decode data into AVFrame exteneded_data buffer
     for(int i = 0; i < avctx->channels; i++){
         samples = frame->extended_data[i];
 	for (int j = 0; j < n; j++)
 	    samples[j] = *src++;
     }
-///<	    samples[j] = src[i*n + j];
     
     *got_frame_ptr = 1;
 
-    return n * avctx->channels;
+    return n * avctx->channels * sample_size;
 }
 
 AVCodec ff_asif_decoder = {
