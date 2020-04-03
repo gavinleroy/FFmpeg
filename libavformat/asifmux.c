@@ -179,7 +179,7 @@ static int asif_write_trailer(AVFormatContext *s){
     if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) && ctx->samples){
         int64_t pos = avio_tell(s->pb);
         avio_seek(s->pb, SAMPLES_OFFSET, SEEK_SET);
-        avio_wl32(s->pb, ctx->samples / ctx->channels);
+        avio_wl32(s->pb, ctx->samples);
         avio_seek(s->pb, pos, SEEK_SET);
     }
 

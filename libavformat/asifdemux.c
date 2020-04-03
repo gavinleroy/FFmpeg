@@ -67,8 +67,6 @@ static int asif_read_header(AVFormatContext *s)
     
     asif_c->samples = avio_rl32(pb);
 
-    printf("Samples Per Channel %d\n", asif_c->samples);
-
     /* In the case of an error, return that we got invalid data */
     if(!asif_c->rate || !asif_c->channels || !asif_c->samples) 
         return AVERROR_INVALIDDATA;

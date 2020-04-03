@@ -36,31 +36,11 @@
 ///<#include "asif.h"
 
 
-/*
- * DECODE ASIF samples macro
- *
- * @param type   Datatype of samples
- * @param endian bytestream_put_xxx() suffix
- * @param dst    Destination buffer (variable name)
- * @param n      Total number of samples (variable name)
- * @param offset Sample value offset
- */
-
-///<    ENCODE(uint8_t, byte, dst, n, 0)
-#define ENCODE(type, endian, dst, n, offset)                            \
-    n /= avctx->channels;						\
-    for (c = 0; c < avctx->channels; c++) {                             \
-        samples_ ## type = (const type *) frame->extended_data[c];      \
-        for (int i = n; i > 0; i--) {				       	\
-            register type v = (*samples_ ## type++) + offset;           \
-	    bytestream_put_ ## endian(&dst, v);                         \
-        }                                                               \
-    }
-
 static int asif_encode_init(AVCodecContext *avctx) {
 
-///<    if(avctx->codec->id == AV_CODEC_ID_ASIF)
-///<        AVERROR(EINVAL); ///< the id of the codec is incorrect
+    if(avctx->codec->id != AV_CODEC_ID_ASIF){
+        return AVERROR(EINVAL); ///< the id of the codec is incorrect
+    }
 
     avctx->bits_per_coded_sample = 8;
 ///<    avctx->block_align           = 0;
@@ -87,6 +67,12 @@ static int asif_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 
     dst = avpkt->data;
 
+    /* Note that actual encoding into the delta form will be done 
+       in the muxer, this is because how the data is stored before
+       actually writing to the file is in a convenient format for 
+       quickly taking the deltas without the need of an additional
+       data strucutre. */
+
     n /= avctx->channels; ///< ECODE THE DATA IN A PLANAR FORM
     for (c = 0; c < avctx->channels; c++){
         samples  = frame->extended_data[c]; 
@@ -94,18 +80,21 @@ static int asif_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 	    *dst++ = *samples++;
     }
 
+    avpkt->size = n * avctx->channels;
+    avpkt->pts = frame->pts;
+    avpkt->duration = frame->nb_samples;
     *got_packet_ptr = 1;
 
     return 0;
 }
 
-static av_cold int asif_encode_close(AVCodecContext *avctx)
-{
-
-    ///< We have no memory to free
-
-    return 0;
-}
+///<static av_cold int asif_encode_close(AVCodecContext *avctx)
+///<{
+///<
+///<    ///< We have no memory to free
+///<
+///<    return 0;
+///<}
 
 AVCodec ff_asif_encoder = {
     .name                  = "asif",
@@ -114,15 +103,8 @@ AVCodec ff_asif_encoder = {
     .id                    = AV_CODEC_ID_ASIF,
     .init                  = asif_encode_init,
     .encode2               = asif_encode_frame,
-    .close                 = asif_encode_close,
-    .capabilities          = AV_CODEC_CAP_VARIABLE_FRAME_SIZE,
+///<    .close                 = asif_encode_close,
+    .capabilities          = AV_CODEC_CAP_VARIABLE_FRAME_SIZE | AV_CODEC_CAP_DR1,
     .sample_fmts           = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_U8P,
 								AV_SAMPLE_FMT_NONE },
 };
-
-/* Saved from example encoder
-    .priv_data_size        = sizeof(ASIFContext),
-    .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE,
-    .channel_layouts       = (const uint64_t[]) { AV_CH_LAYOUT_STEREO, 0},
-    .supported_samplerates = (const int[]) {8000, 16000, 24000, 32000, 44100, 48000, 0},
-*/
