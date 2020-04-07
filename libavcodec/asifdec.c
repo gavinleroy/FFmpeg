@@ -2,7 +2,13 @@
  * Audio Processing Technology codec for NON-Audiophiles 
  *
  * Copyright (C) 2020  Gavin Gray <gavinleroy6@gmail.com>
- * Copyright (C) 2020  Dan Ruley  <drslc14@gmail.com>
+ *
+ * asifdec.c:
+ * The asif decoder receives packets of data from the asif demuxer.
+ * It reconstructs the complete unsigned 8-bit samples from the deltas
+ * and writes them to an AVFrame so that the given asif file can be
+ * played or converted via FFMPEG commands.
+ *
  *
  * This file is part of FFmpeg.
  *
@@ -21,26 +27,36 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <stdio.h>
-
-#include "libavutil/attributes.h"
-#include "libavutil/float_dsp.h"
-#include "avcodec.h"
-#include "bytestream.h"
 #include "internal.h"
-#include "mathops.h"
 
+
+/*Simple struct that keeps track of the previous delta; used for reconstructing
+ *samples from the deltas stored in the .asif file.*/
+typedef struct{
+    uint8_t *prev;
+} ASIFDecodeContext;
+
+/*Set the sample format and initialize the prev array in our ASIFDecodeContext*/
 static int asif_decode_init(AVCodecContext *avctx)
-{
-
+{   
     avctx->sample_fmt = AV_SAMPLE_FMT_U8P;
+
+    ASIFDecodeContext *ctx = avctx->priv_data;
+
+    ctx->prev = (uint8_t *) malloc(avctx->channels * sizeof(uint8_t));
+    
+    for(int i = 0; i < avctx->channels; i++)
+        ctx->prev[i] = 0;
 
     return 0;
 }
 
+/*Decode the data sent from the demuxer in the AVPacket.  Write it into the AVFrame,
+ *rebuilding the samples from the delta values as needed.*/
 static int asif_decode_frame(AVCodecContext *avctx, void *data,
                              int *got_frame_ptr, AVPacket *avpkt)
 {
+    ASIFDecodeContext *ctx = avctx->priv_data;
 
     uint8_t *src = avpkt->data;
     uint8_t *samples;
@@ -57,6 +73,7 @@ static int asif_decode_frame(AVCodecContext *avctx, void *data,
     frame->linesize[0] = n * avctx->channels;
     frame->format = avctx->sample_fmt;
 
+    ///<Basic error checking
     if (n < 0) {
         av_log(avctx, AV_LOG_ERROR, "Invalid sample size\n");
         return AVERROR(EINVAL);
@@ -75,34 +92,41 @@ static int asif_decode_frame(AVCodecContext *avctx, void *data,
     if (ret < 0)
         return ret;
 
-    
     ///< Decode data into AVFrame exteneded_data buffer
-    for(int i = 0; i < avctx->channels; i++){
-        samples = frame->extended_data[i];
-	for (int j = 0; j < n; j++)
-	    samples[j] = *src++;
+    for(int c = 0; c < avctx->channels; c++){
+        samples = frame->extended_data[c];
+	for (int j = 0; j < n; j++){
+	    samples[j] = *src + ctx->prev[c];
+	    ctx->prev[c] = samples[j];
+	    src++;
+	}
     }
     
     *got_frame_ptr = 1;
 
+    ///<Return the size of the data we decoded this frame
     return n * avctx->channels * sample_size;
 }
 
+/*Free up the memory used by our ASIFDecodeContext*/
+static int asif_decode_close(AVCodecContext *avctx) {
+    ASIFDecodeContext *ctx = avctx->priv_data;
+    free(ctx->prev);
+    return 0;
+}
+
+/*Tell FFMPEG relevant information about our decoder and its functions*/
 AVCodec ff_asif_decoder = {
     .name                  = "asif",
-    .long_name             = NULL_IF_CONFIG_SMALL("ASIF audio file (CS 3505 Spring 2020)"),
+    .long_name             = NULL_IF_CONFIG_SMALL("ASIF audio file"),
     .type                  = AVMEDIA_TYPE_AUDIO,
     .id                    = AV_CODEC_ID_ASIF,
+    .priv_data_size        = sizeof(ASIFDecodeContext),
     .init                  = asif_decode_init,
     .decode                = asif_decode_frame,
+    .close                 = asif_decode_close,
     .capabilities   	   = AV_CODEC_CAP_DR1,
     .sample_fmts    	   = (const enum AVSampleFormat[]){ AV_SAMPLE_FMT_U8P,
                                                             AV_SAMPLE_FMT_NONE }, 
 };
 
-/*
-    .priv_data_size        = sizeof(ASIFContext),
-    .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE,
-    .channel_layouts       = (const uint64_t[]) { AV_CH_LAYOUT_STEREO, 0},
-                                                             AV_SAMPLE_FMT_NONE },
-*/

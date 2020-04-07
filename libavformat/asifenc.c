@@ -4,6 +4,11 @@
  * Copyright (C) 2020  Gavin Gray <gavinleroy6@gmail.com>
  * Copyright (C) 2020  Dan Ruley  <drslc14@gmail.com>
  *
+ * asifmux.c:
+ * The asif muxer receives samples from the asif encoder and writes them
+ * to an .asif file per the sepcifications of the .asif file format.
+ *
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -19,34 +24,11 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *
  */
 
-#include <stdio.h>
-
-#include "libavutil/intreadwrite.h"
-
-#include "avformat.h"
-#include "internal.h"
-
-
-
-#include <stdint.h>
-#include <string.h>
-
-#include "libavutil/avstring.h"
-#include "libavutil/dict.h"
-#include "libavutil/common.h"
-#include "libavutil/intreadwrite.h"
-#include "libavutil/mathematics.h"
-#include "libavutil/opt.h"
-#include "libavutil/time.h"
-#include "libavutil/time_internal.h"
-
-#include "avformat.h"
-#include "avio.h"
 #include "avio_internal.h"
 #include "internal.h"
-#include "riff.h"
 
 #define FREQUENCY_OFFSET 4
 #define CHANNELS_OFFSET 8
@@ -56,15 +38,17 @@
 #define INITIAL_SIZE 1
 #define MAX_CHANNELS 200
 
+/*Struct that stores sample data and information about the file*/
 typedef struct{
     int32_t samples;
     int32_t channels;
     int *max;
     int *ind;
     uint8_t **data;
-} ASIFContext;
+} ASIFMuxContext;
 
-static void add_data(ASIFContext *ctx, int channel, int size, uint8_t *src){
+/*Add new sample data to our internal buffers and reallocate memory as needed*/
+static void add_data(ASIFMuxContext *ctx, int channel, int size, uint8_t *src){
 
     if(size + ctx->ind[channel] >= ctx->max[channel]){ ///< Resize and copy over data
 	while(size + ctx->ind[channel] >= ctx->max[channel]) ///< Make sure that new size is large enough
@@ -85,14 +69,14 @@ static void add_data(ASIFContext *ctx, int channel, int size, uint8_t *src){
     ctx->ind[channel] += i - ctx->ind[channel];
 }
 
-static void init_data(ASIFContext *ctx){
+/*Allocate memory for the internal data we are using to store samples.  Also initialize default values.*/
+static void init_data(ASIFMuxContext *ctx){
 
-    ctx->data = (uint8_t **) malloc(MAX_CHANNELS * sizeof(uint8_t *));
-    ctx->max = (int *) malloc(MAX_CHANNELS * sizeof(int));
-    ctx->ind = (int *) malloc(MAX_CHANNELS * sizeof(int));
+    ctx->data = (uint8_t **) malloc(MAX_CHANNELS * sizeof(uint8_t *)); ///<Stores the actual sample data
+    ctx->max = (int *) malloc(MAX_CHANNELS * sizeof(int));             ///<Max size - for dynamic reallocation
+    ctx->ind = (int *) malloc(MAX_CHANNELS * sizeof(int));             ///<Index - current index of last sample in dynamic array
 
-   ///< CHANGED HERE
-    for(int i = 0; i < MAX_CHANNELS; i++){ ///< Start at 1 because channel(0) is already written
+    for(int i = 0; i < MAX_CHANNELS; i++){
         ctx->data[i] = (uint8_t *) malloc(INITIAL_SIZE * sizeof(uint8_t));
 	ctx->max[i] = INITIAL_SIZE;
 	ctx->ind[i] = 0;
@@ -102,7 +86,7 @@ static void init_data(ASIFContext *ctx){
 /* Write header data for the .asif file. */
 static int asif_write_header(AVFormatContext *s){
 
-    ASIFContext *ctx = s->priv_data;
+    ASIFMuxContext *ctx = s->priv_data;
     AVCodecParameters *par = s->streams[0]->codecpar;
 
     ///<Write the 'asif' header
@@ -115,7 +99,6 @@ static int asif_write_header(AVFormatContext *s){
     
     ///<Write the number of channels
     avio_seek(s->pb, CHANNELS_OFFSET, SEEK_SET);
-///<    avio_wl16(s->pb, 1);
     avio_wl16(s->pb, par->channels);
 
     ///<Write the samples per channel
@@ -132,10 +115,11 @@ static int asif_write_header(AVFormatContext *s){
     return 0;
 }
 
-/* Writes the frame of audio data contained inside the AVPacket */
+/*Receives packets from the encoder and stores them in an extended buffer.  This may not be ideal,
+  but this way we know the exact samples/channel value to write into the file header.*/
 static int asif_write_packet(AVFormatContext *s, AVPacket *pkt){
 
-    ASIFContext *ctx = s->priv_data;
+    ASIFMuxContext *ctx = s->priv_data;
 
     ///< The number of sampels per channel in this packet
     int packet_samples = pkt->size / ctx->channels;
@@ -143,19 +127,12 @@ static int asif_write_packet(AVFormatContext *s, AVPacket *pkt){
     uint8_t *src = pkt->data;
 
     for(int i = 0; i < ctx->channels; i++) {
-///<	if(i > 0){ ///< Append to the right vector for later
+        /* All samples are stored in the data buffers,
+	 * after all samples are received the deltas are computed
+	 * and written to the file.  
+	 */
+	add_data(ctx, i, packet_samples, src); 
 
-	    /*  Currently for debugging purposes all channels are written to the 
-	        data vectors and written to the file in the trailor.
-		Before submitting make sure that the first channel is written
-		in real time and all other channels saved in the buffer. 
-	    */
-	    add_data(ctx, i, packet_samples, src); 
-
-///<	} else { ///< Write the first channel to the file
-///<            avio_seek(s->pb, START_OFFSET + ctx->samples, SEEK_SET);    
-///<            avio_write(s->pb, src, packet_samples);
-///<        }
 	src += packet_samples;
     }
     ctx->samples += packet_samples;
@@ -163,17 +140,49 @@ static int asif_write_packet(AVFormatContext *s, AVPacket *pkt){
     return 0;
 }
 
-static void write_remaining_channels(ASIFContext *ctx, AVIOContext *pb){
-    ///< Set stream after the first channel written.
-///<    avio_seek(pb, START_OFFSET + ctx->samples, SEEK_SET);
-    avio_seek(pb, START_OFFSET, SEEK_SET); ///< WE ARE CURRENTLY SAVING/WRITING ALL CHANNELS
-    for(int c = 0; c < ctx->channels; c++){ ///< CHANGED HERE
-        avio_write(pb, ctx->data[c], ctx->samples);    
+
+/*Computes the delta values for the n-1 samples preceding the initial sample for each channel*/
+static void compute_deltas(ASIFMuxContext *ctx, int8_t *deltas, int c) {
+
+    ///<Diff is the difference between ith and i-1th sample.
+    int diff = 0;
+    ///<Cary is any "catch up" from prior deltas that were outside [-128,127]
+    int carry = 0;
+
+    ///<If the diff + carry is outside of the valid range, we clamp it and put the remaining
+    ///<delta in carry for next time.
+     for(int i = 1; i < ctx->ind[c]; i++) {
+         diff = ctx->data[c][i] - ctx->data[c][i-1] + carry;
+         if (diff < -128 || diff > 127) {
+             carry = diff < -128 ? diff + 128 : diff - 127;
+             diff = diff < -128 ? -128 : 127;
+         }
+         deltas[i - 1] = diff;
+         diff = 0;
     }
 }
 
+/*Helper function that writes data contained in our buffer of samples into the .asif file*/
+static void write_channel_data(ASIFMuxContext *ctx, AVIOContext *pb){
+
+    int8_t *deltas = (int8_t *) malloc((ctx->samples-1) * sizeof(int8_t));
+
+    ///<Scan to the right position
+    avio_seek(pb, START_OFFSET, SEEK_SET); 
+
+    ///<Write the first sample as unsigned for each channel, then the deltas
+    for(int c = 0; c < ctx->channels; c++){
+        compute_deltas(ctx, deltas, c);
+        avio_w8(pb, ctx->data[c][0]);   
+        avio_write(pb, deltas, ctx->samples - 1);    
+    }
+    free(deltas);
+}
+
+/*Writes all of the buffered samples to the file, then free any memory we had allocated.*/
 static int asif_write_trailer(AVFormatContext *s){
-    ASIFContext *ctx = s->priv_data;
+  
+    ASIFMuxContext *ctx = s->priv_data;
 
     /* update total number of samples in the first block */
     if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) && ctx->samples){
@@ -182,26 +191,29 @@ static int asif_write_trailer(AVFormatContext *s){
         avio_wl32(s->pb, ctx->samples);
         avio_seek(s->pb, pos, SEEK_SET);
     }
+    
+    ///< Write all the channels to the file.
+    write_channel_data(ctx, s->pb);
 
-    write_remaining_channels(ctx, s->pb);
-
-    ///< Free up all data used by ASIFContext
-    for(int i = 0; i < MAX_CHANNELS; i++){ ///< CHANGED HERE
+    ///< Free up all data used by ASIFMuxContext
+    for(int i = 0; i < MAX_CHANNELS; i++){
 	free(ctx->data[i]);
 	ctx->max[i] = -1;
 	ctx->ind[i] = -1;
     }
+
     free(ctx->max);
     free(ctx->ind);
     free(ctx->data);
     return 0;
 }
 
+/*Supply information to FFMPEG about our muxer: functions, private data size, etc.*/
 AVOutputFormat ff_asif_muxer = {
     .name              = "asif",
-    .long_name         = NULL_IF_CONFIG_SMALL("ASIF audio file (CS 3505 Spring 2020)"),
+    .long_name         = NULL_IF_CONFIG_SMALL("ASIF audio file"),
     .extensions        = "asif",
-    .priv_data_size    = sizeof(ASIFContext),
+    .priv_data_size    = sizeof(ASIFMuxContext),
     .audio_codec       = AV_CODEC_ID_ASIF,
     .video_codec       = AV_CODEC_ID_NONE,
     .write_header      = asif_write_header,

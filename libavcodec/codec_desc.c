@@ -2880,7 +2880,7 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .id        = AV_CODEC_ID_ASIF,
         .type      = AVMEDIA_TYPE_AUDIO,
         .name      = "asif",
-        .long_name = NULL_IF_CONFIG_SMALL("ASIF audio file (CS 3505 Spring 2020)"),
+        .long_name = NULL_IF_CONFIG_SMALL("ASIF audio file"),
         .props     = AV_CODEC_PROP_LOSSY,
     },
     {

@@ -4,6 +4,11 @@
  * Copyright (C) 2020  Gavin Gray <gavinleroy6@gmail.com>
  * Copyright (C) 2020  Dan Ruley  <drslc14@gmail.com>
  *
+ * asifdemux.c:
+ * The asif demuxer reads data from .asif files and stores them in
+ * packets for use by the asif decoder.
+ *
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -21,20 +26,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <stdio.h>
-
 
 #include "internal.h"
-#include "avformat.h"
-#include "rawdec.h"
-
-#define ASIF_SAMPLE_SIZE   1
-#define ASIF_BLOCK_SIZE  (1*ASIF_SAMPLE_SIZE)
 
 #define SAMPLE_OFFSET 14
 #define ASIF_TAG MKTAG('a', 's', 'i', 'f')
 #define MAX_SAMPLES 1024
 
+/*Simple struct that keeps track of some relevant values*/
 typedef struct ASIFDemuxerContext {
     int32_t current;
     int32_t samples;
@@ -42,17 +41,18 @@ typedef struct ASIFDemuxerContext {
     int16_t channels;
 } ASIFDemuxerContext;
 
+/*Reads the header information out of an .asif file and performs error checking.*/
 static int asif_read_header(AVFormatContext *s)
 {
 
-    ASIFDemuxerContext *asif_c = s->priv_data;
+    ASIFDemuxerContext *ctx = s->priv_data;
     AVStream *st = NULL;
     AVIOContext *pb = s->pb;
     
-    asif_c->samples = 0; 
-    asif_c->current = 0; 
-    asif_c->rate = 0; 
-    asif_c->channels = 0;
+    ctx->samples = 0; 
+    ctx->current = 0; 
+    ctx->rate = 0; 
+    ctx->channels = 0;
 
     /*Check for valid asif tag at beginning of file*/
     if (avio_rl32(pb) != ASIF_TAG) {
@@ -61,14 +61,14 @@ static int asif_read_header(AVFormatContext *s)
     }
 
     /* Reading Header Info, assuming all goes well :) */
-    asif_c->rate = avio_rl32(pb);
+    ctx->rate = avio_rl32(pb);
 
-    asif_c->channels = avio_rl16(pb);
+    ctx->channels = avio_rl16(pb);
     
-    asif_c->samples = avio_rl32(pb);
+    ctx->samples = avio_rl32(pb);
 
     /* In the case of an error, return that we got invalid data */
-    if(!asif_c->rate || !asif_c->channels || !asif_c->samples) 
+    if(!ctx->rate || !ctx->channels || !ctx->samples) 
         return AVERROR_INVALIDDATA;
 
     st = avformat_new_stream(s, NULL);
@@ -78,18 +78,19 @@ static int asif_read_header(AVFormatContext *s)
     /*Supply relevant information to the Stream. */
     st->codecpar->codec_type     = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id       = AV_CODEC_ID_ASIF;
-    st->codecpar->sample_rate    = asif_c->rate;
-    st->codecpar->channels       = asif_c->channels;
+    st->codecpar->sample_rate    = ctx->rate;
+    st->codecpar->channels       = ctx->channels;
 
     return 0;
 }
 
+/*Reads sample data from the .asif file and builds an AVPacket which will then
+ *be sent to the asif decoder.*/
 static int asif_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
 
     ASIFDemuxerContext *ctx = s->priv_data;
-    AVCodecParameters *par = s->streams[0]->codecpar;
-    int ret, size, t; 
+    int ret, size, append; 
 
     if(ctx->current >= ctx->samples)
         return AVERROR_EOF;
@@ -111,10 +112,10 @@ static int asif_read_packet(AVFormatContext *s, AVPacket *pkt)
         ///< Seek to next channel at where we left off (ctx->current)
         avio_seek(s->pb, SAMPLE_OFFSET + (i * ctx->samples) + ctx->current, SEEK_SET); 
         ///< Append channel samples to packet
-	t = av_append_packet(s->pb, pkt, size);
-	ret += t;
-	if(t < 0)
-	    return t;
+	append = av_append_packet(s->pb, pkt, size);
+	ret += append;
+	if(append < 0)
+	    return append;
     }
 
     ///< Increment the number of samples that we've read.
@@ -126,9 +127,10 @@ static int asif_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
+/* Supply FFMPEG with information about our demuxer: function calls, format name, etc.*/
 AVInputFormat ff_asif_demuxer = {
     .name           = "asif",
-    .long_name      = NULL_IF_CONFIG_SMALL("ASIF audio file (CS 3505 Spring 2020)"),
+    .long_name      = NULL_IF_CONFIG_SMALL("ASIF audio file"),
     .priv_data_size = sizeof(ASIFDemuxerContext),
     .read_header    = asif_read_header,
     .read_packet    = asif_read_packet,
