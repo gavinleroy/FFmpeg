@@ -2,7 +2,6 @@
  * Audio Processing Technology demuxer for NON-Audiophiles 
  *
  * Copyright (C) 2020  Gavin Gray <gavinleroy6@gmail.com>
- * Copyright (C) 2020  Dan Ruley  <drslc14@gmail.com>
  *
  * asifdemux.c:
  * The asif demuxer reads data from .asif files and stores them in
