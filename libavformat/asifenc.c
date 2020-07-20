@@ -2,7 +2,6 @@
  * Audio Processing Technology codec for NON-Audiophiles 
  *
  * Copyright (C) 2020  Gavin Gray <gavinleroy6@gmail.com>
- * Copyright (C) 2020  Dan Ruley  <drslc14@gmail.com>
  *
  * asifmux.c:
  * The asif muxer receives samples from the asif encoder and writes them
